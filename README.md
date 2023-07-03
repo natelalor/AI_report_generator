@@ -1,6 +1,7 @@
 ## Version 2 is here, ladies and gents!
 #### And mere hours after version 1 was released, here's version 2: shallow_langchain_report_with_audio !!
 Version 1 file: shallow_langchain_report.py (Kept on repo for usability cases)
+
 Version 2 file: shallow_langchain_report_with_audio.py (Newest and bestest!)
 
 shallow_langchain_report_with_audio combines the first version with implementations of code to support audio files. Thus, you can now run version 2 to submit an audio file (m4a, etc), and it will create a .txt file entitled, "audio_generated_text.txt" in the same directory. From there, it will read that .txt file and produce a summarized report on the content! Is this not the coolest thing ever?
