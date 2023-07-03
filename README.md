@@ -15,4 +15,4 @@ polished -- this one was just to make sure it worked in the most simple way. Whi
 
 
 
-_This tool as a part of Blueprint's AI tool development initiative._
+_This tool is a part of Blueprint's AI tool development initiative._
