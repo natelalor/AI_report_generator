@@ -11,8 +11,11 @@ It is still named "shallow", because the backend is not yet implemented -- which
 
 ## Usage Instructions
 Download the .py files by cloning the repo, or however you may desire.
-* To use version 1 (just text-to-report), run the '''shallow_langchain_report.py''' and run it somewhere with a console window (IDE, command line, etc).
-* To use version 2 (audio-to-text-to-report), run the '''shallow_langchain_report_with_audio.py''' and run it somewhere with a console window (IDE, command line, etc).
+
+Then, find the llm_initialization function (the function call is the first line in main), and paste your openai api key in the text field that says, "sk-...."
+
+* To use version 1 (just text-to-report), run the '''shallow_langchain_report.py''' and run it somewhere with a console window (IDE).
+* To use version 2 (audio-to-text-to-report), run the '''shallow_langchain_report_with_audio.py''' and run it somewhere with a console window (IDE).
 
 The only other usage requirement is providing it an audio file as user input. We have tested it on .m4a files, which are files from "Voice Memos" application on iPhones. Further filetype testing and support to come later on.
 
