@@ -1,12 +1,8 @@
-# June 2023
-# Nate Lalor
-
 # imports
 from langchain.document_loaders import UnstructuredFileLoader
 from langchain.chains.summarize import load_summarize_chain
 from langchain.chains.question_answering import load_qa_chain
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-# from langchain.vectorstores import Chroma, Pinecone
 from langchain.embeddings.openai import OpenAIEmbeddings
 from langchain import PromptTemplate
 from langchain import OpenAI
@@ -24,133 +20,98 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 
-# main function handles all function calls and most of user input.
-# version 3 does not contain input validation, that will be addressed
-# in future versions.
-def main():
-    # initializes API specifics
-    llm, openai_ = llm_initialization()
+# setting up constants
+OPENAI_API_KEY = "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"
+CONTEXT_WINDOW_SIZE = 4096 # gpt-3 window size
 
-    # NOTE: the following methods for user input structuring the spit processing
-    # is a tad on the messier side. This is for quick release reasons. Future versions
-    # will contain more robust and cleaner code to facilitate user input
+
+# main function handles all function calls and most of user input.
+def main():
+    llm, openai_ = llm_initialization()
+    openai.api_key = OPENAI_API_KEY
     user_data = input("Do you have external data you'd like to input? (Y/y or N/n): ")
 
-    # ==============================================
-    # IF THE USER DOES HAVE A DATASET, THEY GO HERE
-    # ==============================================
-    if user_data == "Y" or user_data == "y" or user_data == "YES" or user_data == "Yes" or user_data == "yes":
+    if user_data.lower() in ["y", "yes"]:
+        user_choice = input("answer 1 if you have an audio file, answer 2 if you have a txt/pdf file: ")
+        if user_choice == "1":
+            transcription_text = audio_processing(openai_)
+            filename = 'audio_generated_text.txt'
+            text_to_txt(transcription_text, filename)
+            big_doc = load_data(filename)
+        else:
+            user_filename = input("enter filename: ")
+            big_doc = load_data(user_filename)
 
-      user_choice = input("answer 1 if you have an audio file, answer 2 if you have a txt/pdf file: ")
-      
-      # if user has audio file
-      if user_choice == "1":
-        # call to audio
-        transcription_text = audio_processing(openai_)
+        # ADDED CODE: Summarizing text to fit within the context window
+        context_text_size = len(big_doc)
+        room_left_in_window = CONTEXT_WINDOW_SIZE - context_text_size
 
-        # turn the new audio --> text into a txt file
-        filename = 'audio_generated_text.txt'
-        text_to_txt(transcription_text, filename)
+        while room_left_in_window < 0:
+            chunks = [big_doc[i:i+CONTEXT_WINDOW_SIZE] for i in range(0, len(big_doc), CONTEXT_WINDOW_SIZE)]
+            summarized_chunks = [summarize_text(chunk, OPENAI_API_KEY) for chunk in chunks]
+            big_doc = "".join(summarized_chunks)
+            context_text_size = len(big_doc)
+            room_left_in_window = CONTEXT_WINDOW_SIZE - context_text_size
 
-        # load the dataset
-        big_doc = load_data(filename)
-
-      # if user has txt/pdf file
-      else:
-        user_filename = input("enter filename: ")
-
-        # load the dataset
-        big_doc = load_data(user_filename)
-
-      # ------- DONE WITH USER CHOICE -------
-
-      # setting up the function call
-      text_splitter = RecursiveCharacterTextSplitter(chunk_size=2000, chunk_overlap=0)
-
-      # function call to split up the doc
-      split_docs = text_splitter.split_documents(big_doc)
-      
-      # prepare / create the database
-      docs = database_initialization()
-
-      # embed the splitted chunks
-      embedded_chunks = []
-      string_chunks = []
-      for chunk in split_docs:
-         string_chunks.append(str(chunk.page_content))
-         embedding = get_embedding(str(chunk.page_content))
-         embedded_chunks.append(embedding)
-
-      # upsert all the embeddings (with id's) into database
-      counter = 0
-      for chunk in embedded_chunks:
+        text_splitter = RecursiveCharacterTextSplitter(chunk_size=2000, chunk_overlap=0)
+        split_docs = text_splitter.split_documents(big_doc)
+        
+        docs = database_initialization()
+        
+        embedded_chunks = []
+        string_chunks = []
+        for chunk in split_docs:
+            string_chunks.append(str(chunk.page_content))
+            embedding = get_embedding(str(chunk.page_content))
+            embedded_chunks.append(embedding)
+        
+        counter = 0
+        for chunk in embedded_chunks:
             id = "vec" + str(counter)
-            # add records to the collection
             docs.upsert(
                 vectors=[
                     (
-                    id,                                          # the vector's identifier
-                    chunk,                                       # the vector. list or np.array
-                    {"client_info": string_chunks[counter]}    # associated  metadata
+                    id,                                         
+                    chunk,                                       
+                    {"client_info": string_chunks[counter]}    
                     )
                 ]
             )
             counter += 1
+            
+        docs.create_index(measure=vecs.IndexMeasure.cosine_distance)
+        
+        user_focus, user_context, table_of_contents_outline = generate_focused_table_of_contents(big_doc)
+        
+        user_ideals = user_focus + user_context
+        embedded_user_input = get_embedding(user_ideals)
 
-      # index the collection to be queried by cosine distance
-      docs.create_index(measure=vecs.IndexMeasure.cosine_distance)
-      
-      # generate a table of contents
-      user_focus, user_context, table_of_contents_outline = generate_focused_table_of_contents()
-
-      print("Please wait while we process your report. This may take a minute...")
-
-      # then embed the user's response into vectors
-      user_ideals = user_focus + user_context
-      embedded_user_input = get_embedding(user_ideals)
-
-      query_response = docs.query(
-        query_vector=embedded_user_input,  # required
-        limit=2,                     # number of records to return
-        filters={},                  # metadata filters
-        measure="cosine_distance",   # distance measure to use
-        include_value=False,         # should distance measure values be returned?
-        include_metadata=True,      # should record metadata be returned?
+        query_response = docs.query(
+            query_vector=embedded_user_input,  
+            limit=2,                     
+            filters={},                  
+            measure="cosine_distance",   
+            include_value=False,         
+            include_metadata=True,      
         )
+        
+        external_context = []
+        for x in query_response:
+            external_context.append(x.metadata)
+            
+        final_report = generate_report(user_focus, user_context, table_of_contents_outline, external_context)
+        text_to_document(final_report)
 
-      # given the list of ID's (query_response), iterate through the database using the IDs
-      # and get the UNembedded values (stored in metadata)
-      external_context = []
-      for x in query_response:
-         external_context.append(x.metadata)
-
-      # function that actually creates the final report
-      final_report = generate_report(user_focus, user_context, table_of_contents_outline, external_context)
-      
-      # function to turn the text array (final_report) and put it into a Google Doc
-      text_to_document(final_report)
-      
-    # ==============================================
-    # IF THE USER DOES NOT HAVE A DATASET, GOES HERE
-    # ==============================================
-    elif user_data == "N" or user_data == "n" or user_data == "NO" or user_data == "No" or user_data == "no":
-      external_context = []
-
-      # generate a table of contents
-      user_focus, user_context, table_of_contents_outline = generate_focused_table_of_contents()
-
-      print("Please wait while we process your report. This may take a minute...")
-      
-      # function that actually creates the final report
-      final_report = generate_report(user_focus, user_context, table_of_contents_outline, external_context)
-
-      # function to turn the text array (final_report) and put it into a Google Doc
-      text_to_document(final_report)
-
-    # a temporary user input catcher if it isn't Y / N / etc...
-    # will be a better solution in the future!
+    elif user_data.lower() in ["n", "no"]:
+        external_context = []
+        big_doc="no context provided"
+        user_focus, user_context, table_of_contents_outline = generate_focused_table_of_contents(big_doc)
+        final_report = generate_report(user_focus, user_context, table_of_contents_outline, external_context)
+        text_to_document(final_report)
     else:
-      print("I couldn't understand you. Goodbye!")
+        print("I couldn't understand you. Goodbye!")
+
+# Rest of your functions
 
 
 #======================================================================#
@@ -164,6 +125,18 @@ def main():
 
 # turns raw text (from the audio function) into a .txt file
 # to then be able to manipulate it
+
+def summarize_text(text, openai_api_key, model='text-davinci-003', tokens=2000):
+    openai.api_key = openai_api_key
+    prompt = f"Text: {text}\nSummarized Text:"
+    response = openai.Completion.create(
+        engine=model,
+        prompt=prompt,
+        temperature=0.3,
+        max_tokens=tokens
+    )
+    return response.choices[0].text.strip()
+
 def text_to_txt(transcription_text, filename):
     with open(filename, 'w') as f:
         f.write(str(transcription_text))
@@ -191,7 +164,7 @@ def update_chat(messages, role, content):
 # basically preparing to use OpenAI's API
 def llm_initialization():
     # LLM setup
-    OPENAI_API_KEY = "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"
+    OPENAI_API_KEY = "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"
     llm = OpenAI(openai_api_key=OPENAI_API_KEY)
     return llm, OPENAI_API_KEY
 
@@ -199,14 +172,19 @@ def llm_initialization():
 # make a short conversation with the user. Acquires purpose and context
 # which then generates and returns a table of contents, along with the user
 # purpose and context (for later querying purposes)
-def generate_focused_table_of_contents():
+def generate_focused_table_of_contents(big_doc):
   # the starting "prompt" for the ChatCompletion
+
+  mystring= "You are a Top-tier Management Consultant with an MBA and Outstanding Expertise in the Field, Renowned for Major Contributions to International Business Strategy and Consultancy. Context from client:{}.1. First you will ask what is the purpose of this deliverable? 2.Then you will use that information to create and propose a table on contents. Make sure the table of contents has exactly 6 sections with exactly 3 subsections in each section. Return no other prose. Start:".format(big_doc)
+
   messages=[
-          {"role": "system", "content": "You are a Top-tier Management Consultant with an MBA and Outstanding Expertise in the Field, Renowned for Major Contributions to International Business Strategy and Consultancy. You want to make a detailed report for a client, but you need to know the purpose first. You will ask each of the following questions one at a time, and wait for the client to respond before proceeding. 1. First you will ask what is the purpose of this deliverable? 2. Then you ask clarifying questions to get any additional context to help you do a better job. Then, using those first 2 questions, you will make a table of contents for a report on the client's subject. Make sure the table of contents has exactly 6 sections with exactly 3 subsections in each section. Make sure to minimize all other prose. Start:"},
-          {"role": "assistant", "content": "Let us start at step 1, about the purpose of the deliverable. Ready for my first question?"},
+          {"role": "system", "content": "{}".format(mystring)},
+          {"role": "assistant", "content":"What is the purpose of this deliverable?"},
 
       ]
   
+  print(messages[0])
+
   # for iteration of while loop
   counter = 1
 
@@ -215,14 +193,14 @@ def generate_focused_table_of_contents():
   ai_response_array = []
 
   # the conversation
-  print("Ready to begin the report builder?")
-  while counter != 4:
+  print("What is the purpose of this deliverable?")
+  while counter != 3:
     user_input = input()
     messages = update_chat(messages, "user", str(user_input))
     user_input_array.append(user_input)
     model_response = get_chatgpt_response(messages)
     # code so table of contents isnt printed
-    if counter !=3:
+    if counter !=2:
         print(model_response)
     ai_response_array.append(model_response)
     messages = update_chat(messages, "assistant", model_response)
@@ -231,10 +209,10 @@ def generate_focused_table_of_contents():
   # now that conversation is over, harness the user_inputs for their focus of deliverable
   # as well as their further context
   user_focus = user_input_array[1]
-  user_context = user_input_array[2]
+  user_context = "n/a"
 
   # also the table of contents
-  table_of_contents_outline = ai_response_array[2]
+  table_of_contents_outline = ai_response_array[1]
 
   return user_focus, user_context, table_of_contents_outline
 
@@ -243,6 +221,7 @@ def generate_focused_table_of_contents():
 # returned (final_report)
 def generate_report(user_focus, user_context, table_of_contents_outline, external_context):
   final_report = []
+  print("making report...")
   for i in range(1, 7):
     for j in range(1, 4):
       
@@ -251,15 +230,14 @@ def generate_report(user_focus, user_context, table_of_contents_outline, externa
          # this prompt is if the user didn't have any external data processed.
         completion_prompt = (
             """You are a Top-tier Management Consultant with an MBA and Outstanding Expertise in the Field, Renowned for Major Contributions to International Business Strategy and Consultancy. Note: When you write you avoid cliché language, show with figurative language instead of telling with bland language, make your message interesting, memorable, meaningful, and above all - clear and valuable. 
-            You are writing a report on: {0}. Specifically, the client wants you to focus on: 
-                            {1}. 
-                            
-                            This is your table of contents:
-                            {2}
+            This is the purpose of what you're writing: {0}. 
 
-                            This is section {3}, subsection {4} of the report completed:
+                            This is your table of contents:
+                            {1}
+
+                            This is section {2}.{3} of the report completed:
                           
-                            """.format(user_focus, user_context, table_of_contents_outline, i, j)
+                            """.format(user_focus,table_of_contents_outline, i, j)
         )
       else:
         # create the prompt to send to new completion
@@ -267,21 +245,19 @@ def generate_report(user_focus, user_context, table_of_contents_outline, externa
          # we run a query for semantic similarity and the top 2 results and then given in the prompt
         completion_prompt = (
             """You are a Top-tier Management Consultant with an MBA and Outstanding Expertise in the Field, Renowned for Major Contributions to International Business Strategy and Consultancy. Note: When you write you avoid cliché language, show with figurative language instead of telling with bland language, make your message interesting, memorable, meaningful, and above all - clear and valuable. 
-            You are writing a report on: {0}. Specifically, the client wants you to focus on: 
-                            {1}. 
+            You are writing a report on: {0}. 
                             
                             This is your table of contents:
-                            {2}
+                            {1}
 
-                            Here is some extra information provided by the client. Make sure to use it to form your answer:
+                            Here is some extra context:
+                            * {2}
                             * {3}
-                            * {4}
 
-                            This is section {5}, subsection {6} of the report completed:
+                            This is section {4}.{5} of the report completed:
                           
                             """.format(
-                                    user_focus,
-                                    user_context, 
+                                    user_focus, 
                                     table_of_contents_outline, 
                                     external_context[0],                # first "chunk" retrieved from our database
                                     external_context[1],                # second "chunk" retrieved from our database
@@ -409,7 +385,7 @@ def database_initialization():
 
 # helper function to create embeddings
 def get_embedding(text, model="text-embedding-ada-002"):
-   embeddings = OpenAIEmbeddings(openai_api_key="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")
+   embeddings = OpenAIEmbeddings(openai_api_key="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")
    text = text.replace("\n", " ")
    embed = openai.Embedding.create(input = [text], model=model)['data'][0]['embedding']
    return embed
