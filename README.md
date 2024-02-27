@@ -24,4 +24,4 @@ The only other usage requirement is providing it an audio file as user input. We
 
 _This tool is a part of Blueprint's AI tool development initiative. Reach out to them: <a href="https://www.linkedin.com/company/blueprint-servicedesign/" target="_blank">LinkedIn</a>_
 
-_Project Timeline: June 15th, 2023 - Present_
+_Project Timeline: June 15th, 2023 - July 27th, 2023_
